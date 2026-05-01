@@ -6,6 +6,7 @@ import (
 	_ "image/jpeg" // register JPEG format
 	_ "image/png"  // register PNG format
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -97,7 +98,6 @@ func NewFilePicker(com *common.Common) (*FilePicker, tea.Cmd) {
 	)
 
 	fp := filepicker.New()
-	fp.AllowedTypes = common.AllowedImageTypes
 	fp.ShowPermissions = false
 	fp.ShowSize = false
 	fp.AutoHeight = false
@@ -180,16 +180,8 @@ func (f *FilePicker) HandleMsg(msg tea.Msg) Action {
 	var cmd tea.Cmd
 	f.fp, cmd = f.fp.Update(msg)
 	if selFile := f.fp.HighlightedPath(); selFile != "" {
-		var allowed bool
-		for _, allowedExt := range f.fp.AllowedTypes {
-			if strings.HasSuffix(strings.ToLower(selFile), allowedExt) {
-				allowed = true
-				break
-			}
-		}
-
-		f.previewingImage = allowed
-		if allowed && !fimage.HasTransmitted(selFile, f.imgPrevWidth, f.imgPrevHeight) {
+		f.previewingImage = isPreviewableImage(selFile)
+		if f.previewingImage && !fimage.HasTransmitted(selFile, f.imgPrevWidth, f.imgPrevHeight) {
 			f.previewingImage = false
 			img, err := loadImage(selFile)
 			if err == nil {
@@ -240,7 +232,7 @@ func (f *FilePicker) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 	t := f.com.Styles
 	rc := NewRenderContext(t, width)
 	rc.Gap = 1
-	rc.Title = "Add Image"
+	rc.Title = "Add File"
 	rc.Help = f.help.View(f)
 
 	imgPreview := t.Dialog.ImagePreview.Align(lipgloss.Center).Width(innerWidth).Render(f.imagePreview(imgPrevWidth, imgPrevHeight))
@@ -309,4 +301,14 @@ func loadImage(path string) (img image.Image, err error) {
 	}
 
 	return img, nil
+}
+
+func isPreviewableImage(path string) bool {
+	lowerPath := strings.ToLower(filepath.Base(path))
+	for _, allowedExt := range common.AllowedImageTypes {
+		if strings.HasSuffix(lowerPath, allowedExt) {
+			return true
+		}
+	}
+	return false
 }

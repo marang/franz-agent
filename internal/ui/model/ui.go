@@ -1987,15 +1987,12 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 
 			switch {
 			case key.Matches(msg, m.keyMap.Editor.AddImage):
-				if !m.currentModelSupportsImages() {
-					break
-				}
 				if cmd := m.openFilesDialog(); cmd != nil {
 					cmds = append(cmds, cmd)
 				}
 
 			case key.Matches(msg, m.keyMap.Editor.PasteImage):
-				cmds = append(cmds, m.pasteImageFromClipboard)
+				cmds = append(cmds, m.pasteAttachmentFromClipboard)
 
 			case key.Matches(msg, m.keyMap.Editor.SendMessage):
 				prevHeight := m.textarea.Height()
@@ -2569,9 +2566,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
 			}
-			if m.currentModelSupportsImages() {
-				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
-			}
+			editorBinds = append(editorBinds, k.Editor.AddImage)
 			binds = append(binds, editorBinds)
 			if hasAttachments {
 				binds = append(binds,
@@ -2621,9 +2616,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 				k.Editor.MentionFile,
 				k.Editor.OpenEditor,
 			}
-			if m.currentModelSupportsImages() {
-				editorBinds = append(editorBinds, k.Editor.AddImage, k.Editor.PasteImage)
-			}
+			editorBinds = append(editorBinds, k.Editor.AddImage)
 			binds = append(binds, editorBinds)
 			if hasAttachments {
 				binds = append(binds,
@@ -3021,6 +3014,8 @@ func (m *UI) openEditor(value string) tea.Cmd {
 	if _, err := tmpfile.WriteString(value); err != nil {
 		return util.ReportError(err)
 	}
+	restoreEditorEnv := m.applyConfiguredEditorEnv()
+	defer restoreEditorEnv()
 	cmd, err := editor.Command(
 		"franz",
 		tmpPath,
@@ -3032,11 +3027,7 @@ func (m *UI) openEditor(value string) tea.Cmd {
 	if err != nil {
 		return util.ReportError(err)
 	}
-	if cfg := m.com.Config(); cfg != nil && cfg.Options != nil {
-		if editorCmd := strings.TrimSpace(cfg.Options.Editor); editorCmd != "" {
-			cmd.Env = append(os.Environ(), "FRANZ_EDITOR="+editorCmd)
-		}
-	}
+	cmd.Env = os.Environ()
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		defer func() {
 			_ = os.Remove(tmpPath)
@@ -3056,6 +3047,27 @@ func (m *UI) openEditor(value string) tea.Cmd {
 			Text: strings.TrimSpace(string(content)),
 		}
 	})
+}
+
+func (m *UI) applyConfiguredEditorEnv() func() {
+	cfg := m.com.Config()
+	if cfg == nil || cfg.Options == nil {
+		return func() {}
+	}
+	editorCmd := strings.TrimSpace(cfg.Options.Editor)
+	if editorCmd == "" {
+		return func() {}
+	}
+
+	previous, hadPrevious := os.LookupEnv("EDITOR")
+	_ = os.Setenv("EDITOR", editorCmd)
+	return func() {
+		if hadPrevious {
+			_ = os.Setenv("EDITOR", previous)
+			return
+		}
+		_ = os.Unsetenv("EDITOR")
+	}
 }
 
 // setEditorPrompt configures the textarea prompt function based on the current
@@ -3714,7 +3726,7 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 	}
 
 	if shouldAttemptClipboardImagePaste(msg) {
-		return m.pasteImageFromClipboard
+		return m.pasteAttachmentFromClipboard
 	}
 
 	if hasPasteExceededThreshold(msg) {
@@ -3744,19 +3756,8 @@ func (m *UI) handlePasteMsg(msg tea.PasteMsg) tea.Cmd {
 			return false
 		}
 		for _, path := range paths {
-			if _, err := os.Stat(path); os.IsNotExist(err) {
-				return false
-			}
-
-			lowerPath := strings.ToLower(path)
-			isValid := false
-			for _, ext := range common.AllowedImageTypes {
-				if strings.HasSuffix(lowerPath, ext) {
-					isValid = true
-					break
-				}
-			}
-			if !isValid {
+			fileInfo, err := os.Stat(path)
+			if err != nil || fileInfo.IsDir() {
 				return false
 			}
 		}
@@ -3825,10 +3826,10 @@ func (m *UI) handleFilePathPaste(path string) tea.Cmd {
 	}
 }
 
-// pasteImageFromClipboard reads image data from the system clipboard and
+// pasteAttachmentFromClipboard reads data from the system clipboard and
 // creates an attachment. If no image data is found, it falls back to
-// interpreting clipboard text as a file path.
-func (m *UI) pasteImageFromClipboard() tea.Msg {
+// interpreting clipboard text as a file path or normal pasted text.
+func (m *UI) pasteAttachmentFromClipboard() tea.Msg {
 	// Prefer OS-specific shell fallback first (wl-paste/xclip/xsel on Linux).
 	// This path is more reliable on Wayland than nativeclipboard image reads.
 	imageData, err := readClipboardImageFallback()
@@ -3877,50 +3878,14 @@ func (m *UI) pasteImageFromClipboard() tea.Msg {
 			}
 		}
 
-		path := strings.ReplaceAll(text, "\\ ", " ")
-		if _, statErr := os.Stat(path); statErr == nil {
-			lowerPath := strings.ToLower(path)
-			isAllowed := false
-			for _, ext := range common.AllowedImageTypes {
-				if strings.HasSuffix(lowerPath, ext) {
-					isAllowed = true
-					break
-				}
-			}
-			if !isAllowed {
-				return util.NewInfoMsg("File type is not a supported image format")
-			}
-
-			fileInfo, statErr := os.Stat(path)
-			if statErr != nil {
-				return util.InfoMsg{
-					Type: util.InfoTypeError,
-					Msg:  fmt.Sprintf("Unable to read file: %v", statErr),
-				}
-			}
-			if fileInfo.Size() > common.MaxAttachmentSize {
-				return util.InfoMsg{
-					Type: util.InfoTypeError,
-					Msg:  "File too large, max 5MB",
-				}
-			}
-
-			content, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return util.InfoMsg{
-					Type: util.InfoTypeError,
-					Msg:  fmt.Sprintf("Unable to read file: %v", readErr),
-				}
-			}
-
-			idx = m.pasteIdx()
-			return message.Attachment{
-				FilePath: path,
-				FileName: fmt.Sprintf("Image #%d", idx),
-				MimeType: mimeOf(content),
-				Content:  content,
+		paths := fsext.ParsePastedFiles(text)
+		if len(paths) == 1 {
+			if attachment, ok := attachmentFromPath(paths[0]); ok {
+				return attachment
 			}
 		}
+
+		return tea.PasteMsg{Content: string(textData)}
 	}
 
 	if err != nil {
@@ -3935,7 +3900,25 @@ func (m *UI) pasteImageFromClipboard() tea.Msg {
 			Msg:  fmt.Sprintf("Clipboard text fallback failed: %v", textErr),
 		}
 	}
-	return util.NewInfoMsg("Clipboard does not currently contain an image")
+	return util.NewInfoMsg("Clipboard does not currently contain text, an image, or a file path")
+}
+
+func attachmentFromPath(path string) (message.Attachment, bool) {
+	fileInfo, err := os.Stat(path)
+	if err != nil || fileInfo.IsDir() || fileInfo.Size() > common.MaxAttachmentSize {
+		return message.Attachment{}, false
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return message.Attachment{}, false
+	}
+	mimeBufferSize := min(512, len(content))
+	return message.Attachment{
+		FilePath: path,
+		FileName: filepath.Base(path),
+		MimeType: http.DetectContentType(content[:mimeBufferSize]),
+		Content:  content,
+	}, true
 }
 
 func parseClipboardImageDataURL(raw string) ([]byte, string, bool) {
