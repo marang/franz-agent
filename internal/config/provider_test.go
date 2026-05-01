@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"charm.land/catwalk/pkg/catwalk"
@@ -12,9 +11,9 @@ import (
 )
 
 func resetProviderState() {
-	providerOnce = sync.Once{}
-	providerList = nil
-	providerErr = nil
+	providerCacheMu.Lock()
+	providerCache = make(map[providerCacheKey]*providerCacheEntry)
+	providerCacheMu.Unlock()
 	catwalkSyncer = &catwalkSync{}
 	hyperSyncer = &hyperSync{}
 }

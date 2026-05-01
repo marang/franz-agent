@@ -59,6 +59,7 @@ const (
 	smallContextWindowRatio     = 0.2
 	titleMaxOutputTokens        = int64(40)
 	summaryMaxOutputTokens      = int64(1200)
+	messageStreamUpdateInterval = 150 * time.Millisecond
 )
 
 var userAgent = fmt.Sprintf("Franz-Agent/%s (https://github.com/marang/franz-agent)", version.Version)
@@ -265,6 +266,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	estimatedOutputRuneBudget := int(call.MaxOutputTokens * 4)
 	outputRunes := 0
 	codexLimitReached := false
+	assistantUpdater := newMessageUpdateThrottler(a.messages, messageStreamUpdateInterval)
 	var maxOutputTokens *int64
 	if !isCodex && call.MaxOutputTokens > 0 {
 		maxOutputTokens = &call.MaxOutputTokens
@@ -343,7 +345,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		},
 		OnReasoningStart: func(id string, reasoning fantasy.ReasoningContent) error {
 			currentAssistant.AppendReasoningContent(reasoning.Text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return assistantUpdater.Flush(genCtx, *currentAssistant)
 		},
 		OnReasoningDelta: func(id string, text string) error {
 			if isCodex && estimatedOutputRuneBudget > 0 {
@@ -355,7 +357,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				}
 			}
 			currentAssistant.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return assistantUpdater.Update(genCtx, *currentAssistant)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			// handle anthropic signature
@@ -375,7 +377,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				}
 			}
 			currentAssistant.FinishThinking()
-			return a.messages.Update(genCtx, *currentAssistant)
+			return assistantUpdater.Flush(genCtx, *currentAssistant)
 		},
 		OnTextDelta: func(id string, text string) error {
 			if isCodex && estimatedOutputRuneBudget > 0 {
@@ -394,7 +396,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			}
 
 			currentAssistant.AppendContent(text)
-			return a.messages.Update(genCtx, *currentAssistant)
+			return assistantUpdater.Update(genCtx, *currentAssistant)
 		},
 		OnToolInputStart: func(id string, toolName string) error {
 			toolCall := message.ToolCall{
@@ -460,7 +462,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 				return sessionErr
 			}
 			currentSession = updatedSession
-			return a.messages.Update(genCtx, *currentAssistant)
+			return assistantUpdater.Flush(genCtx, *currentAssistant)
 		},
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
@@ -608,6 +610,9 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		if updateErr != nil {
 			return nil, updateErr
 		}
+		if isPermissionDiscussErr {
+			return a.runNextQueued(ctx, call.SessionID, result, err, cancel)
+		}
 		return nil, err
 	}
 
@@ -638,17 +643,20 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		}
 	}
 
-	// Release active request before processing queued messages.
-	a.activeRequests.Del(call.SessionID)
+	return a.runNextQueued(ctx, call.SessionID, result, err, cancel)
+}
+
+func (a *sessionAgent) runNextQueued(ctx context.Context, sessionID string, result *fantasy.AgentResult, err error, cancel context.CancelFunc) (*fantasy.AgentResult, error) {
+	a.activeRequests.Del(sessionID)
 	cancel()
 
-	queuedMessages, ok := a.messageQueue.Get(call.SessionID)
+	queuedMessages, ok := a.messageQueue.Get(sessionID)
 	if !ok || len(queuedMessages) == 0 {
 		return result, err
 	}
 	// There are queued messages restart the loop.
 	firstQueuedMessage := queuedMessages[0]
-	a.messageQueue.Set(call.SessionID, queuedMessages[1:])
+	a.messageQueue.Set(sessionID, queuedMessages[1:])
 	return a.Run(ctx, firstQueuedMessage)
 }
 
@@ -694,6 +702,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	if err != nil {
 		return err
 	}
+	summaryUpdater := newMessageUpdateThrottler(a.messages, messageStreamUpdateInterval)
 
 	summaryPromptText := buildSummaryPrompt(currentSession.Todos)
 
@@ -720,7 +729,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 		},
 		OnReasoningDelta: func(id string, text string) error {
 			summaryMessage.AppendReasoningContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			return summaryUpdater.Update(genCtx, summaryMessage)
 		},
 		OnReasoningEnd: func(id string, reasoning fantasy.ReasoningContent) error {
 			// Handle anthropic signature.
@@ -730,11 +739,11 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 				}
 			}
 			summaryMessage.FinishThinking()
-			return a.messages.Update(genCtx, summaryMessage)
+			return summaryUpdater.Flush(genCtx, summaryMessage)
 		},
 		OnTextDelta: func(id, text string) error {
 			summaryMessage.AppendContent(text)
-			return a.messages.Update(genCtx, summaryMessage)
+			return summaryUpdater.Update(genCtx, summaryMessage)
 		},
 	})
 	if err != nil {
@@ -748,7 +757,7 @@ func (a *sessionAgent) Summarize(ctx context.Context, sessionID string, opts fan
 	}
 
 	summaryMessage.AddFinish(message.FinishReasonEndTurn, "", "")
-	err = a.messages.Update(genCtx, summaryMessage)
+	err = summaryUpdater.Flush(genCtx, summaryMessage)
 	if err != nil {
 		return err
 	}
@@ -1238,6 +1247,10 @@ func (a *sessionAgent) convertToToolResult(result fantasy.ToolResultContent) mes
 		}
 	case fantasy.ToolResultContentTypeError:
 		if r, ok := fantasy.AsToolResultOutputType[fantasy.ToolResultOutputContentError](result.Result); ok {
+			if errors.Is(r.Error, permission.ErrorPermissionDiscuss) {
+				baseResult.Content = "Permission moved to discussion with the user"
+				return baseResult
+			}
 			baseResult.Content = r.Error.Error()
 			baseResult.IsError = true
 		}

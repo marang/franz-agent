@@ -1,13 +1,13 @@
 package config
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"sync"
 
 	"charm.land/catwalk/pkg/catwalk"
 	hyperp "github.com/marang/franz-agent/internal/agent/hyper"
@@ -29,6 +29,7 @@ type ConfigStore struct {
 	globalDataPath string // ~/.local/share/franz-agent/franz-agent.json
 	workspacePath  string // .franz-agent/franz-agent.json
 	knownProviders []catwalk.Provider
+	configMu       sync.Mutex
 }
 
 // Config returns the pure-data config struct (read-only after load).
@@ -86,6 +87,14 @@ func (s *ConfigStore) HasConfigField(scope Scope, key string) bool {
 
 // SetConfigField sets a key/value pair in the config file for the given scope.
 func (s *ConfigStore) SetConfigField(scope Scope, key string, value any) error {
+	return s.SetConfigFields(scope, map[string]any{key: value})
+}
+
+// SetConfigFields sets multiple key/value pairs in one config file update.
+func (s *ConfigStore) SetConfigFields(scope Scope, fields map[string]any) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	path := s.configPath(scope)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -96,21 +105,21 @@ func (s *ConfigStore) SetConfigField(scope Scope, key string, value any) error {
 		}
 	}
 
-	newValue, err := sjson.Set(string(data), key, value)
-	if err != nil {
-		return fmt.Errorf("failed to set config field %s: %w", key, err)
+	newValue := string(data)
+	for key, value := range fields {
+		newValue, err = sjson.Set(newValue, key, value)
+		if err != nil {
+			return fmt.Errorf("failed to set config field %s: %w", key, err)
+		}
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create config directory %q: %w", path, err)
-	}
-	if err := os.WriteFile(path, []byte(newValue), 0o600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
-	}
-	return nil
+	return writeConfigFile(path, []byte(newValue))
 }
 
 // RemoveConfigField removes a key from the config file for the given scope.
 func (s *ConfigStore) RemoveConfigField(scope Scope, key string) error {
+	s.configMu.Lock()
+	defer s.configMu.Unlock()
+
 	path := s.configPath(scope)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -121,11 +130,35 @@ func (s *ConfigStore) RemoveConfigField(scope Scope, key string) error {
 	if err != nil {
 		return fmt.Errorf("failed to delete config field %s: %w", key, err)
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	return writeConfigFile(path, []byte(newValue))
+}
+
+func writeConfigFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("failed to create config directory %q: %w", path, err)
 	}
-	if err := os.WriteFile(path, []byte(newValue), 0o600); err != nil {
-		return fmt.Errorf("failed to write config file: %w", err)
+
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary config file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to write temporary config file: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to set temporary config permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary config file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("failed to replace config file: %w", err)
 	}
 	return nil
 }
@@ -197,9 +230,6 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 
 	switch v := apiKey.(type) {
 	case string:
-		if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), v); err != nil {
-			return fmt.Errorf("failed to save api key to config file: %w", err)
-		}
 		setKeyOrToken = func() { providerConfig.APIKey = v }
 	case *oauth.Token:
 		accountID := ""
@@ -209,12 +239,6 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 			if err != nil {
 				return fmt.Errorf("failed to extract chatgpt account id from access token: %w", err)
 			}
-		}
-		if err := cmp.Or(
-			s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), v.AccessToken),
-			s.SetConfigField(scope, fmt.Sprintf("providers.%s.oauth", providerID), v),
-		); err != nil {
-			return err
 		}
 		setKeyOrToken = func() {
 			providerConfig.APIKey = v.AccessToken
@@ -233,7 +257,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 	if exists {
 		setKeyOrToken()
 		s.config.Providers.Set(providerID, providerConfig)
-		return nil
+		return s.persistProviderCredential(scope, providerID, providerConfig)
 	}
 
 	var foundProvider *catwalk.Provider
@@ -261,12 +285,22 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 	}
 	s.config.Providers.Set(providerID, providerConfig)
 
-	if providerID == openai_codex.ProviderID {
-		if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.extra_headers", providerID), providerConfig.ExtraHeaders); err != nil {
-			return fmt.Errorf("failed to persist provider headers: %w", err)
-		}
-	}
+	return s.persistProviderCredential(scope, providerID, providerConfig)
+}
 
+func (s *ConfigStore) persistProviderCredential(scope Scope, providerID string, providerConfig ProviderConfig) error {
+	fields := map[string]any{
+		fmt.Sprintf("providers.%s.api_key", providerID): providerConfig.APIKey,
+	}
+	if providerConfig.OAuthToken != nil {
+		fields[fmt.Sprintf("providers.%s.oauth", providerID)] = providerConfig.OAuthToken
+	}
+	if providerID == openai_codex.ProviderID {
+		fields[fmt.Sprintf("providers.%s.extra_headers", providerID)] = providerConfig.ExtraHeaders
+	}
+	if err := s.SetConfigFields(scope, fields); err != nil {
+		return fmt.Errorf("failed to save provider credentials to config file: %w", err)
+	}
 	return nil
 }
 
@@ -315,16 +349,15 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 
 	s.config.Providers.Set(providerID, providerConfig)
 
-	if err := cmp.Or(
-		s.SetConfigField(scope, fmt.Sprintf("providers.%s.api_key", providerID), newToken.AccessToken),
-		s.SetConfigField(scope, fmt.Sprintf("providers.%s.oauth", providerID), newToken),
-	); err != nil {
-		return fmt.Errorf("failed to persist refreshed token: %w", err)
+	fields := map[string]any{
+		fmt.Sprintf("providers.%s.api_key", providerID): newToken.AccessToken,
+		fmt.Sprintf("providers.%s.oauth", providerID):   newToken,
 	}
 	if providerID == openai_codex.ProviderID {
-		if err := s.SetConfigField(scope, fmt.Sprintf("providers.%s.extra_headers", providerID), providerConfig.ExtraHeaders); err != nil {
-			return fmt.Errorf("failed to persist refreshed provider headers: %w", err)
-		}
+		fields[fmt.Sprintf("providers.%s.extra_headers", providerID)] = providerConfig.ExtraHeaders
+	}
+	if err := s.SetConfigFields(scope, fields); err != nil {
+		return fmt.Errorf("failed to persist refreshed token: %w", err)
 	}
 
 	return nil
@@ -392,13 +425,6 @@ func (s *ConfigStore) ImportCopilot() (*oauth.Token, bool) {
 
 	if err := s.SetProviderAPIKey(ScopeGlobal, string(catwalk.InferenceProviderCopilot), token); err != nil {
 		return token, false
-	}
-
-	if err := cmp.Or(
-		s.SetConfigField(ScopeGlobal, "providers.copilot.api_key", token.AccessToken),
-		s.SetConfigField(ScopeGlobal, "providers.copilot.oauth", token),
-	); err != nil {
-		slog.Error("Unable to save GitHub Copilot token to disk", "error", err)
 	}
 
 	slog.Info("GitHub Copilot successfully imported")

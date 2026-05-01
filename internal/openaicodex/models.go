@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const maxErrorBodyExcerpt = 512
+
 type ModelsRequest struct {
 	BaseURL       string
 	AccessToken   string
@@ -93,7 +95,7 @@ func FetchModels(ctx context.Context, req ModelsRequest) ([]RemoteModel, error) 
 		return nil, fmt.Errorf("read models response: %w", err)
 	}
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return nil, fmt.Errorf("models endpoint returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("models endpoint returned %d: %s", resp.StatusCode, responseBodyExcerpt(body))
 	}
 
 	var payload modelsPayload
@@ -116,6 +118,14 @@ func FetchModels(ctx context.Context, req ModelsRequest) ([]RemoteModel, error) 
 		return nil, fmt.Errorf("models payload contained no usable models")
 	}
 	return models, nil
+}
+
+func responseBodyExcerpt(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if len(text) <= maxErrorBodyExcerpt {
+		return text
+	}
+	return text[:maxErrorBodyExcerpt] + "...[truncated]"
 }
 
 func modelsEndpoint(baseURL, clientVersion string) (string, error) {

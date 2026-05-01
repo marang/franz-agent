@@ -28,10 +28,24 @@ type syncer[T any] interface {
 }
 
 var (
-	providerOnce sync.Once
-	providerList []catwalk.Provider
-	providerErr  error
+	providerCacheMu sync.Mutex
+	providerCache   = make(map[providerCacheKey]*providerCacheEntry)
 )
+
+type providerCacheKey struct {
+	autoupdate          bool
+	customProvidersOnly bool
+	catwalkURL          string
+	hyperURL            string
+	providersPath       string
+	hyperPath           string
+}
+
+type providerCacheEntry struct {
+	once sync.Once
+	list []catwalk.Provider
+	err  error
+}
 
 // file to cache provider data
 func cachePathFor(name string) string {
@@ -128,6 +142,7 @@ func UpdateHyper(pathOrURL string) error {
 var (
 	catwalkSyncer = &catwalkSync{}
 	hyperSyncer   = &hyperSync{}
+	syncerMu      sync.Mutex
 )
 
 // Providers returns the list of providers, taking into account cached results
@@ -140,58 +155,96 @@ var (
 // 3. try to get the fresh list of providers, and return either this new list,
 // the cached list, or the embedded list if all others fail.
 func Providers(cfg *Config) ([]catwalk.Provider, error) {
-	providerOnce.Do(func() {
-		var wg sync.WaitGroup
-		var errs []error
-		providers := csync.NewSlice[catwalk.Provider]()
-		autoupdate := !cfg.Options.DisableProviderAutoUpdate
-		customProvidersOnly := cfg.Options.DisableDefaultProviders
-
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-
-		wg.Go(func() {
-			if customProvidersOnly {
-				return
-			}
-			catwalkURL := cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL)
-			client := catwalk.NewWithURL(catwalkURL)
-			path := cachePathFor("providers")
-			catwalkSyncer.Init(client, path, autoupdate)
-
-			items, err := catwalkSyncer.Get(ctx)
-			if err != nil {
-				catwalkURL := fmt.Sprintf("%s/v2/providers", cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL))
-				errs = append(errs, fmt.Errorf("Franz was unable to fetch an updated list of providers from %s. Consider setting IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE=1 to use the embedded providers bundled at the time of this Franz release. You can also update providers manually. For more info see franz-agent update-providers --help.\n\nCause: %w", catwalkURL, err)) //nolint:staticcheck
-				return
-			}
-			providers.Append(items...)
-		})
-
-		wg.Go(func() {
-			if customProvidersOnly || !hyper.Enabled() {
-				return
-			}
-			path := cachePathFor("hyper")
-			hyperSyncer.Init(realHyperClient{baseURL: hyper.BaseURL()}, path, autoupdate)
-
-			item, err := hyperSyncer.Get(ctx)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("Franz was unable to fetch updated information from Hyper: %w", err)) //nolint:staticcheck
-				return
-			}
-			providers.Append(item)
-		})
-
-		wg.Wait()
-
-		providerList = slices.Collect(providers.Seq())
-		if !customProvidersOnly {
-			providerList = ensureOpenAICodexProvider(providerList)
-		}
-		providerErr = errors.Join(errs...)
+	key := providerKey(cfg)
+	entry := providerEntry(key)
+	entry.once.Do(func() {
+		entry.list, entry.err = loadProviders(key)
 	})
-	return providerList, providerErr
+	return slices.Clone(entry.list), entry.err
+}
+
+func providerKey(cfg *Config) providerCacheKey {
+	var options Options
+	if cfg != nil && cfg.Options != nil {
+		options = *cfg.Options
+	}
+	return providerCacheKey{
+		autoupdate:          !options.DisableProviderAutoUpdate,
+		customProvidersOnly: options.DisableDefaultProviders,
+		catwalkURL:          cmp.Or(os.Getenv("CATWALK_URL"), defaultCatwalkURL),
+		hyperURL:            hyper.BaseURL(),
+		providersPath:       cachePathFor("providers"),
+		hyperPath:           cachePathFor("hyper"),
+	}
+}
+
+func providerEntry(key providerCacheKey) *providerCacheEntry {
+	providerCacheMu.Lock()
+	defer providerCacheMu.Unlock()
+
+	entry := providerCache[key]
+	if entry == nil {
+		entry = &providerCacheEntry{}
+		providerCache[key] = entry
+	}
+	return entry
+}
+
+func loadProviders(key providerCacheKey) ([]catwalk.Provider, error) {
+	var wg sync.WaitGroup
+	providers := csync.NewSlice[catwalk.Provider]()
+	errs := make(chan error, 2)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	wg.Go(func() {
+		if key.customProvidersOnly {
+			return
+		}
+		client := catwalk.NewWithURL(key.catwalkURL)
+		syncerMu.Lock()
+		defer syncerMu.Unlock()
+		catwalkSyncer.Init(client, key.providersPath, key.autoupdate)
+
+		items, err := catwalkSyncer.Get(ctx)
+		if err != nil {
+			catwalkURL := fmt.Sprintf("%s/v2/providers", key.catwalkURL)
+			errs <- fmt.Errorf("Franz was unable to fetch an updated list of providers from %s. Consider setting IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE=1 to use the embedded providers bundled at the time of this Franz release. You can also update providers manually. For more info see franz-agent update-providers --help.\n\nCause: %w", catwalkURL, err) //nolint:staticcheck
+			return
+		}
+		providers.Append(items...)
+	})
+
+	wg.Go(func() {
+		if key.customProvidersOnly || !hyper.Enabled() {
+			return
+		}
+		syncerMu.Lock()
+		defer syncerMu.Unlock()
+		hyperSyncer.Init(realHyperClient{baseURL: key.hyperURL}, key.hyperPath, key.autoupdate)
+
+		item, err := hyperSyncer.Get(ctx)
+		if err != nil {
+			errs <- fmt.Errorf("Franz was unable to fetch updated information from Hyper: %w", err) //nolint:staticcheck
+			return
+		}
+		providers.Append(item)
+	})
+
+	wg.Wait()
+	close(errs)
+
+	list := slices.Collect(providers.Seq())
+	if !key.customProvidersOnly {
+		list = ensureOpenAICodexProvider(list)
+	}
+
+	collectedErrs := make([]error, 0, len(errs))
+	for err := range errs {
+		collectedErrs = append(collectedErrs, err)
+	}
+	return list, errors.Join(collectedErrs...)
 }
 
 type cache[T any] struct {

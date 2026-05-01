@@ -2,7 +2,6 @@ package attachments
 
 import (
 	"fmt"
-	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -95,9 +94,17 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width
 	var chips []string
 
 	maxItemWidth := lipgloss.Width(r.imageStyle.String() + r.normalStyle.Render(strings.Repeat("x", maxFilename)))
-	fits := int(math.Floor(float64(width)/float64(maxItemWidth))) - 1
+	if maxItemWidth <= 0 || width <= 0 || len(attachments) == 0 {
+		return ""
+	}
+	fits := max(0, width/maxItemWidth-1)
 
 	for i, att := range attachments {
+		if i == fits && len(attachments) > fits {
+			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", len(attachments)-fits)))
+			break
+		}
+
 		filename := filepath.Base(att.FileName)
 		// Truncate if needed.
 		if ansi.StringWidth(filename) > maxFilename {
@@ -116,11 +123,6 @@ func (r *Renderer) Render(attachments []message.Attachment, deleting bool, width
 				r.icon(att).String(),
 				r.normalStyle.Render(filename),
 			)
-		}
-
-		if i == fits && len(attachments) > i {
-			chips = append(chips, lipgloss.NewStyle().Width(maxItemWidth).Render(fmt.Sprintf("%d more…", len(attachments)-fits)))
-			break
 		}
 	}
 

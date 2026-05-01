@@ -22,7 +22,6 @@ import (
 	"time"
 	"unicode"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
@@ -30,7 +29,6 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2"
 	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/ultraviolet/layout"
 	"github.com/charmbracelet/ultraviolet/screen"
 	"github.com/charmbracelet/x/editor"
 	"github.com/marang/franz-agent/internal/agent"
@@ -1743,15 +1741,7 @@ func (m *UI) handleDialogMsg(msg tea.Msg) tea.Cmd {
 		case dialog.PermissionAllowForSession:
 			m.com.App.Permissions.GrantPersistent(msg.Permission)
 		case dialog.PermissionDiscuss:
-			m.com.App.Permissions.Discuss(msg.Permission)
-			discussPrompt := fmt.Sprintf(
-				"Lass uns genau diese vorgeschlagene Änderung diskutieren und dann fortsetzen.\n\nPermission-Request:\n- Tool: %s\n- Action: %s\n- Path: %s\n- Beschreibung: %s\n\nBitte beziehe dich auf diese Änderung, schlage kurz einen sicheren Weg vor und setze danach die Umsetzung fort.",
-				msg.Permission.ToolName,
-				msg.Permission.Action,
-				msg.Permission.Path,
-				msg.Permission.Description,
-			)
-			cmds = append(cmds, m.sendMessage(discussPrompt))
+			cmds = append(cmds, m.queuePermissionDiscussion(msg.Permission, permissionDiscussionPrompt(msg.Permission)))
 		case dialog.PermissionDeny:
 			m.com.App.Permissions.Deny(msg.Permission)
 		}
@@ -2315,7 +2305,8 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		editor.Draw(scr, layout.editor)
 
 	case uiChat:
-		if m.isCompact {
+		compactLayout := layout.sidebar.Dx() == 0
+		if compactLayout {
 			m.drawHeader(scr, layout.header)
 		} else {
 			m.drawSidebar(scr, layout.sidebar)
@@ -2327,14 +2318,14 @@ func (m *UI) Draw(scr uv.Screen, area uv.Rectangle) *tea.Cursor {
 		}
 
 		editorWidth := scr.Bounds().Dx()
-		if !m.isCompact {
+		if !compactLayout {
 			editorWidth -= layout.sidebar.Dx()
 		}
 		editor := uv.NewStyledString(m.renderEditorView(editorWidth))
 		editor.Draw(scr, layout.editor)
 
 		// Draw details overlay in compact mode when open
-		if m.isCompact && m.detailsOpen {
+		if compactLayout && m.detailsOpen {
 			m.drawSessionDetails(scr, layout.sessionDetails)
 		}
 	}
@@ -2475,6 +2466,7 @@ func (m *UI) ShortHelp() []key.Binding {
 
 		switch m.focus {
 		case uiFocusEditor:
+			binds = append(binds, k.Editor.AddImage)
 		case uiFocusMain:
 			binds = append(binds,
 				k.Chat.UpDown,
@@ -2814,164 +2806,10 @@ func (m *UI) updateSize() {
 	// Handle different app states
 	switch m.state {
 	case uiChat:
-		if !m.isCompact {
+		if m.layout.sidebar.Dx() > 0 {
 			m.cacheSidebarLogo(m.layout.sidebar.Dx())
 		}
 	}
-}
-
-// generateLayout calculates the layout rectangles for all UI components based
-// on the current UI state and terminal dimensions.
-func (m *UI) generateLayout(w, h int) uiLayout {
-	// The screen area we're working with
-	area := image.Rect(0, 0, w, h)
-
-	// The help height
-	helpHeight := 1
-	// The editor height: textarea height + margin for attachments and bottom spacing.
-	editorHeight := m.textarea.Height() + editorHeightMargin
-	// The sidebar width
-	sidebarWidth := 30
-	// The header height
-	const landingHeaderHeight = 7
-
-	var helpKeyMap help.KeyMap = m
-	if m.status != nil && m.status.ShowingAll() {
-		for _, row := range helpKeyMap.FullHelp() {
-			helpHeight = max(helpHeight, len(row))
-		}
-	}
-
-	// Add app margins
-	appParts := layout.Vertical(layout.Len(area.Dy()-helpHeight), layout.Fill(1)).Split(area)
-	appRect, helpRect := appParts[0], appParts[1]
-	appRect.Min.Y += 1
-	appRect.Max.Y -= 1
-	helpRect.Min.Y -= 1
-	appRect.Min.X += 1
-	appRect.Max.X -= 1
-
-	if slices.Contains([]uiState{uiOnboarding, uiInitialize, uiLanding}, m.state) {
-		// extra padding on left and right for these states
-		appRect.Min.X += 1
-		appRect.Max.X -= 1
-	}
-
-	uiLayout := uiLayout{
-		area:   area,
-		status: helpRect,
-	}
-
-	// Handle different app states
-	switch m.state {
-	case uiOnboarding, uiInitialize:
-		// Layout
-		//
-		// header
-		// ------
-		// main
-		// ------
-		// help
-
-		headerParts := layout.Vertical(layout.Len(landingHeaderHeight), layout.Fill(1)).Split(appRect)
-		headerRect, mainRect := headerParts[0], headerParts[1]
-		uiLayout.header = headerRect
-		uiLayout.main = mainRect
-
-	case uiLanding:
-		// Layout
-		//
-		// header
-		// ------
-		// main
-		// ------
-		// editor
-		// ------
-		// help
-		headerParts := layout.Vertical(layout.Len(landingHeaderHeight), layout.Fill(1)).Split(appRect)
-		headerRect, mainRect := headerParts[0], headerParts[1]
-		mainEditorParts := layout.Vertical(layout.Len(mainRect.Dy()-editorHeight), layout.Fill(1)).Split(mainRect)
-		mainRect, editorRect := mainEditorParts[0], mainEditorParts[1]
-		// Remove extra padding from editor (but keep it for header and main)
-		editorRect.Min.X -= 1
-		editorRect.Max.X += 1
-		uiLayout.header = headerRect
-		uiLayout.main = mainRect
-		uiLayout.editor = editorRect
-
-	case uiChat:
-		if m.isCompact {
-			// Layout
-			//
-			// compact-header
-			// ------
-			// main
-			// ------
-			// editor
-			// ------
-			// help
-			const compactHeaderHeight = 4
-			compactHeaderParts := layout.Vertical(layout.Len(compactHeaderHeight), layout.Fill(1)).Split(appRect)
-			headerRect, mainRect := compactHeaderParts[0], compactHeaderParts[1]
-			detailsHeight := min(sessionDetailsMaxHeight, area.Dy()-1) // One row for the header
-			detailsParts := layout.Vertical(layout.Len(detailsHeight), layout.Fill(1)).Split(appRect)
-			sessionDetailsArea, _ := detailsParts[0], detailsParts[1]
-			uiLayout.sessionDetails = sessionDetailsArea
-			uiLayout.sessionDetails.Min.Y += compactHeaderHeight // adjust for header
-			// Add one line gap between header and main content
-			mainRect.Min.Y += 1
-			mainEditorParts := layout.Vertical(layout.Len(mainRect.Dy()-editorHeight), layout.Fill(1)).Split(mainRect)
-			mainRect, editorRect := mainEditorParts[0], mainEditorParts[1]
-			mainRect.Max.X -= 1 // Add padding right
-			uiLayout.header = headerRect
-			pillsHeight := m.pillsAreaHeight()
-			if pillsHeight > 0 {
-				pillsHeight = min(pillsHeight, mainRect.Dy())
-				compactPillsParts := layout.Vertical(layout.Len(mainRect.Dy()-pillsHeight), layout.Fill(1)).Split(mainRect)
-				chatRect, pillsRect := compactPillsParts[0], compactPillsParts[1]
-				uiLayout.main = chatRect
-				uiLayout.pills = pillsRect
-			} else {
-				uiLayout.main = mainRect
-			}
-			// Add bottom margin to main
-			uiLayout.main.Max.Y -= 1
-			uiLayout.editor = editorRect
-		} else {
-			// Layout
-			//
-			// ------|---
-			// main  |
-			// ------| side
-			// editor|
-			// ----------
-			// help
-
-			mainSideParts := layout.Horizontal(layout.Len(appRect.Dx()-sidebarWidth), layout.Fill(1)).Split(appRect)
-			mainRect, sideRect := mainSideParts[0], mainSideParts[1]
-			// Add padding left
-			sideRect.Min.X += 1
-			mainEditorParts := layout.Vertical(layout.Len(mainRect.Dy()-editorHeight), layout.Fill(1)).Split(mainRect)
-			mainRect, editorRect := mainEditorParts[0], mainEditorParts[1]
-			mainRect.Max.X -= 1 // Add padding right
-			uiLayout.sidebar = sideRect
-			pillsHeight := m.pillsAreaHeight()
-			if pillsHeight > 0 {
-				pillsHeight = min(pillsHeight, mainRect.Dy())
-				compactPillsParts := layout.Vertical(layout.Len(mainRect.Dy()-pillsHeight), layout.Fill(1)).Split(mainRect)
-				chatRect, pillsRect := compactPillsParts[0], compactPillsParts[1]
-				uiLayout.main = chatRect
-				uiLayout.pills = pillsRect
-			} else {
-				uiLayout.main = mainRect
-			}
-			// Add bottom margin to main
-			uiLayout.main.Max.Y -= 1
-			uiLayout.editor = editorRect
-		}
-	}
-
-	return uiLayout
 }
 
 // uiLayout defines the positioning of UI elements.
@@ -3529,7 +3367,8 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		if err != nil {
 			isCancelErr := errors.Is(err, context.Canceled)
 			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
-			if isCancelErr || isPermissionErr {
+			isPermissionDiscussErr := errors.Is(err, permission.ErrorPermissionDiscuss)
+			if isCancelErr || isPermissionErr || isPermissionDiscussErr {
 				return nil
 			}
 			return util.InfoMsg{
@@ -3540,6 +3379,44 @@ func (m *UI) sendMessage(content string, attachments ...message.Attachment) tea.
 		return nil
 	})
 	return tea.Batch(cmds...)
+}
+
+func (m *UI) queuePermissionDiscussion(perm permission.PermissionRequest, content string) tea.Cmd {
+	runOptions := agent.RunOptions{
+		PlanMode: true,
+	}
+	return func() tea.Msg {
+		if m.com.App.AgentCoordinator == nil {
+			m.com.App.Permissions.Discuss(perm)
+			return util.ReportError(fmt.Errorf("coder agent is not initialized"))()
+		}
+
+		_, err := m.com.App.AgentCoordinator.RunWithOptions(context.Background(), perm.SessionID, content, runOptions)
+		m.com.App.Permissions.Discuss(perm)
+		if err != nil {
+			isCancelErr := errors.Is(err, context.Canceled)
+			isPermissionErr := errors.Is(err, permission.ErrorPermissionDenied)
+			isPermissionDiscussErr := errors.Is(err, permission.ErrorPermissionDiscuss)
+			if isCancelErr || isPermissionErr || isPermissionDiscussErr {
+				return nil
+			}
+			return util.InfoMsg{
+				Type: util.InfoTypeError,
+				Msg:  err.Error(),
+			}
+		}
+		return nil
+	}
+}
+
+func permissionDiscussionPrompt(perm permission.PermissionRequest) string {
+	return fmt.Sprintf(
+		"Let's discuss this proposed tool action before continuing.\n\nPermission request:\n- Tool: %s\n- Action: %s\n- Path: %s\n- Description: %s\n\nExplain what you intended to do, why it is needed, and any safer alternatives. Do not run tools or continue the implementation until the user explicitly approves the next step.",
+		perm.ToolName,
+		perm.Action,
+		perm.Path,
+		perm.Description,
+	)
 }
 
 func (m *UI) handleLocalPlanCommand(value string) (tea.Cmd, bool) {

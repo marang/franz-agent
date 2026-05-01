@@ -1,6 +1,7 @@
 package model
 
 import (
+	"image"
 	"strconv"
 	"strings"
 	"testing"
@@ -114,5 +115,55 @@ func TestHandleTextareaHeightChange_FollowModeStaysAtBottom(t *testing.T) {
 	}
 	if !u.chat.AtBottom() {
 		t.Fatal("expected chat to remain at bottom after editor resize in follow mode")
+	}
+}
+
+func TestGenerateLayout_NarrowTerminalUsesValidCompactRects(t *testing.T) {
+	t.Parallel()
+
+	for _, size := range []struct {
+		width  int
+		height int
+	}{
+		{width: 80, height: 24},
+		{width: 60, height: 16},
+		{width: 40, height: 10},
+	} {
+		t.Run(strconv.Itoa(size.width)+"x"+strconv.Itoa(size.height), func(t *testing.T) {
+			t.Parallel()
+
+			u := newTestUI()
+			layout := u.generateLayout(size.width, size.height)
+			area := image.Rect(0, 0, size.width, size.height)
+
+			requireValidRectInArea(t, layout.area, area)
+			requireValidRectInArea(t, layout.status, area)
+			requireValidRectInArea(t, layout.header, area)
+			requireValidRectInArea(t, layout.main, area)
+			requireValidRectInArea(t, layout.editor, area)
+			requireValidRectInArea(t, layout.pills, area)
+			requireValidRectInArea(t, layout.sessionDetails, area)
+			requireValidRectInArea(t, layout.sidebar, area)
+
+			if size.width < sidebarWidth+minSidebarMainWidth {
+				if layout.sidebar.Dx() != 0 {
+					t.Fatalf("expected narrow layout to omit sidebar, got width %d", layout.sidebar.Dx())
+				}
+				if layout.header.Dy() == 0 {
+					t.Fatal("expected compact header in narrow layout")
+				}
+			}
+		})
+	}
+}
+
+func requireValidRectInArea(t *testing.T, rect, area image.Rectangle) {
+	t.Helper()
+
+	if rect.Dx() < 0 || rect.Dy() < 0 {
+		t.Fatalf("invalid rectangle %v", rect)
+	}
+	if rect.Min.X < area.Min.X || rect.Max.X > area.Max.X || rect.Min.Y < area.Min.Y || rect.Max.Y > area.Max.Y {
+		t.Fatalf("rectangle %v is outside area %v", rect, area)
 	}
 }

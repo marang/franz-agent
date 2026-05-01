@@ -10,9 +10,12 @@ import (
 	"charm.land/catwalk/pkg/catwalk"
 	"charm.land/lipgloss/v2/tree"
 	"github.com/marang/franz-agent/internal/config"
+	"github.com/marang/franz-agent/internal/oauth/openai_codex"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
+
+var modelsRefresh bool
 
 var modelsCmd = &cobra.Command{
 	Use:   "models",
@@ -40,6 +43,11 @@ franz-agent models gpt5`,
 
 		if !cfg.Config().IsConfigured() {
 			return fmt.Errorf("no providers configured - please run 'franz-agent' to set up a provider interactively")
+		}
+		if modelsRefresh {
+			if err := refreshDynamicModels(cmd, cfg); err != nil {
+				return err
+			}
 		}
 
 		term := strings.ToLower(strings.Join(args, " "))
@@ -106,5 +114,21 @@ franz-agent models gpt5`,
 }
 
 func init() {
+	modelsCmd.Flags().BoolVar(&modelsRefresh, "refresh", false, "Refresh dynamic model lists before printing")
 	rootCmd.AddCommand(modelsCmd)
+}
+
+func refreshDynamicModels(cmd *cobra.Command, cfg *config.ConfigStore) error {
+	for providerID, provider := range cfg.Config().Providers.Seq2() {
+		if provider.Disable || provider.ID != openai_codex.ProviderID {
+			continue
+		}
+		models, err := config.RefreshOpenAICodexModels(cmd.Context(), provider)
+		if err != nil {
+			return fmt.Errorf("refresh %s models: %w", providerID, err)
+		}
+		provider.Models = models
+		cfg.Config().Providers.Set(providerID, provider)
+	}
+	return nil
 }

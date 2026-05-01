@@ -184,6 +184,40 @@ func TestSidebarShortcutDoesNotReachTextareaOutsideChat(t *testing.T) {
 	require.Equal(t, "abc", ui.textarea.Value())
 }
 
+func TestShortHelpShowsAddFileWhenEditorFocused(t *testing.T) {
+	t.Parallel()
+
+	ui := newTestUI()
+	ui.keyMap = DefaultKeyMap()
+
+	var found bool
+	for _, binding := range ui.ShortHelp() {
+		help := binding.Help()
+		if help.Key == "ctrl+f" && help.Desc == "add file" {
+			found = true
+			break
+		}
+	}
+
+	require.True(t, found)
+}
+
+func TestPermissionDiscussionPromptUsesEnglishAndWaits(t *testing.T) {
+	t.Parallel()
+
+	prompt := permissionDiscussionPrompt(permission.PermissionRequest{
+		ToolName:    "bash",
+		Action:      "execute",
+		Path:        "/tmp/project",
+		Description: "Execute command: go test ./...",
+	})
+
+	require.Contains(t, prompt, "Let's discuss this proposed tool action before continuing.")
+	require.Contains(t, prompt, "Do not run tools or continue the implementation until the user explicitly approves the next step.")
+	require.NotContains(t, prompt, "Lass uns")
+	require.NotContains(t, prompt, "setze danach")
+}
+
 func TestCyclePermissionModeCyclesModes(t *testing.T) {
 	t.Parallel()
 

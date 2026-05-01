@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -81,7 +82,7 @@ func TestOpenAICodexRemoteModels(t *testing.T) {
 	require.True(t, got[0].SupportsImages)
 }
 
-func TestOpenAICodexModelsForProviderCachesRemoteModels(t *testing.T) {
+func TestRefreshOpenAICodexModelsCachesRemoteModels(t *testing.T) {
 	t.Setenv("XDG_DATA_HOME", t.TempDir())
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -109,7 +110,9 @@ func TestOpenAICodexModelsForProviderCachesRemoteModels(t *testing.T) {
 		},
 	}
 
-	got := openAICodexModelsForProvider(provider, fallback)
+	provider.Models = fallback
+	got, err := RefreshOpenAICodexModels(context.Background(), provider)
+	require.NoError(t, err)
 	require.Equal(t, []string{"gpt-live", "gpt-fallback"}, modelIDs(got))
 
 	provider.BaseURL = "http://127.0.0.1:1/backend-api/codex"

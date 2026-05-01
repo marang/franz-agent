@@ -2,8 +2,8 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -90,6 +90,10 @@ func buildPinnedOpenAICodexModels(providers []catwalk.Provider) []catwalk.Model 
 }
 
 func openAICodexModelsForProvider(providerCfg ProviderConfig, fallback []catwalk.Model) []catwalk.Model {
+	return mergeOpenAICodexModels(readCachedOpenAICodexModels(), fallback)
+}
+
+func RefreshOpenAICodexModels(ctx context.Context, providerCfg ProviderConfig) ([]catwalk.Model, error) {
 	accountID := strings.TrimSpace(providerCfg.ExtraHeaders["chatgpt-account-id"])
 	if accountID == "" && providerCfg.OAuthToken != nil {
 		if parsed, err := openai_codex.ExtractAccountID(providerCfg.OAuthToken.AccessToken); err == nil {
@@ -101,13 +105,10 @@ func openAICodexModelsForProvider(providerCfg ProviderConfig, fallback []catwalk
 		accessToken = providerCfg.OAuthToken.AccessToken
 	}
 	if accessToken == "" || accountID == "" {
-		return mergeOpenAICodexModels(readCachedOpenAICodexModels(), fallback)
-	}
-	if cached := readFreshCachedOpenAICodexModels(); len(cached) > 0 {
-		return mergeOpenAICodexModels(cached, fallback)
+		return nil, fmt.Errorf("missing OpenAI Codex credentials")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	remote, err := openaicodex.FetchModels(ctx, openaicodex.ModelsRequest{
 		BaseURL:       providerCfg.BaseURL,
@@ -116,26 +117,17 @@ func openAICodexModelsForProvider(providerCfg ProviderConfig, fallback []catwalk
 		ClientVersion: version.Version,
 	})
 	if err != nil {
-		slog.Debug("Failed to refresh OpenAI Codex models", "error", err)
-		return mergeOpenAICodexModels(readCachedOpenAICodexModels(), fallback)
+		return nil, fmt.Errorf("fetch OpenAI Codex models: %w", err)
 	}
 
 	models := openAICodexRemoteModels(remote)
 	if len(models) == 0 {
-		return mergeOpenAICodexModels(readCachedOpenAICodexModels(), fallback)
+		return nil, fmt.Errorf("OpenAI Codex models payload contained no usable models")
 	}
 	if err := newCache[[]catwalk.Model](openAICodexModelCachePath()).Store(models); err != nil {
 		slog.Debug("Failed to cache OpenAI Codex models", "error", err)
 	}
-	return mergeOpenAICodexModels(models, fallback)
-}
-
-func readFreshCachedOpenAICodexModels() []catwalk.Model {
-	info, err := os.Stat(openAICodexModelCachePath())
-	if err != nil || time.Since(info.ModTime()) > openAICodexModelCacheTTL {
-		return nil
-	}
-	return readCachedOpenAICodexModels()
+	return mergeOpenAICodexModels(models, providerCfg.Models), nil
 }
 
 func readCachedOpenAICodexModels() []catwalk.Model {
