@@ -265,17 +265,16 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 	estimatedOutputRuneBudget := int(call.MaxOutputTokens * 4)
 	outputRunes := 0
 	codexLimitReached := false
+	var maxOutputTokens *int64
+	if !isCodex && call.MaxOutputTokens > 0 {
+		maxOutputTokens = &call.MaxOutputTokens
+	}
 	result, err := agent.Stream(genCtx, fantasy.AgentStreamCall{
-		Prompt:          message.PromptWithTextAttachments(call.Prompt, call.Attachments),
-		Files:           files,
-		Messages:        history,
-		ProviderOptions: call.ProviderOptions,
-		MaxOutputTokens: func() *int64 {
-			if isCodex {
-				return nil
-			}
-			return &call.MaxOutputTokens
-		}(),
+		Prompt:           message.PromptWithTextAttachments(call.Prompt, call.Attachments),
+		Files:            files,
+		Messages:         history,
+		ProviderOptions:  call.ProviderOptions,
+		MaxOutputTokens:  maxOutputTokens,
 		TopP:             call.TopP,
 		Temperature:      call.Temperature,
 		PresencePenalty:  call.PresencePenalty,
@@ -471,6 +470,11 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 		StopWhen: []fantasy.StopCondition{
 			func(_ []fantasy.StepResult) bool {
 				cw := int64(largeModel.CatwalkCfg.ContextWindow)
+				// If context window is unknown (0), skip auto-summarize
+				// to avoid immediately truncating custom/local models.
+				if cw == 0 {
+					return false
+				}
 				tokens := currentSession.CompletionTokens + currentSession.PromptTokens
 				remaining := cw - tokens
 				threshold := summarizeThreshold(cw, isCodex)
