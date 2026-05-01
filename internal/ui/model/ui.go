@@ -727,7 +727,6 @@ func (m *UI) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.keyenh = msg
 		if msg.SupportsKeyDisambiguation() {
 			m.keyMap.Models.SetHelp("ctrl+m", "models")
-			m.keyMap.Editor.Newline.SetHelp("shift+enter", "newline")
 		}
 	case copyChatHighlightMsg:
 		cmds = append(cmds, m.copyChatHighlight())
@@ -2117,10 +2116,6 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 				if cmd != nil {
 					cmds = append(cmds, cmd)
 				}
-			case key.Matches(msg, m.keyMap.Editor.Commands) && m.textarea.Value() == "":
-				if cmd := m.openCommandsDialog(); cmd != nil {
-					cmds = append(cmds, cmd)
-				}
 			default:
 				if handleGlobalKeys(msg) {
 					// Handle global keys first before passing to textarea.
@@ -2451,7 +2446,7 @@ func (m *UI) ShortHelp() []key.Binding {
 	tab := k.Tab
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
-		commands.SetHelp("? or ctrl+p", "commands")
+		commands.SetHelp("ctrl+p", "commands")
 	}
 
 	switch m.state {
@@ -2483,9 +2478,6 @@ func (m *UI) ShortHelp() []key.Binding {
 
 		switch m.focus {
 		case uiFocusEditor:
-			binds = append(binds,
-				k.Editor.Newline,
-			)
 		case uiFocusMain:
 			binds = append(binds,
 				k.Chat.UpDown,
@@ -2505,7 +2497,6 @@ func (m *UI) ShortHelp() []key.Binding {
 		binds = append(binds,
 			commands,
 			k.Models,
-			k.Editor.Newline,
 		)
 	}
 
@@ -2527,7 +2518,7 @@ func (m *UI) FullHelp() [][]key.Binding {
 	hasSession := m.hasSession()
 	commands := k.Commands
 	if m.focus == uiFocusEditor && m.textarea.Value() == "" {
-		commands.SetHelp("? or ctrl+p", "commands")
+		commands.SetHelp("ctrl+p", "commands")
 	}
 
 	switch m.state {
@@ -2573,7 +2564,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 		switch m.focus {
 		case uiFocusEditor:
 			editorBinds := []key.Binding{
-				k.Editor.Newline,
 				k.Editor.PrevWord,
 				k.Editor.NextWord,
 				k.Editor.MentionFile,
@@ -2626,7 +2616,6 @@ func (m *UI) FullHelp() [][]key.Binding {
 				},
 			)
 			editorBinds := []key.Binding{
-				k.Editor.Newline,
 				k.Editor.PrevWord,
 				k.Editor.NextWord,
 				k.Editor.MentionFile,
