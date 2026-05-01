@@ -123,14 +123,6 @@ You can check usage limits from:
 `status` reports the current Codex subscription windows (for example 5h and
 weekly usage buckets) when available.
 
-### By the Way
-
-Is there a provider you’d like to see in Franz? Is there an existing model that needs an update?
-
-Franz’s default model listing is managed in [Catwalk](https://github.com/charmbracelet/catwalk), a community-supported, open source repository of Franz-compatible models, and you’re welcome to contribute.
-
-<a href="https://github.com/charmbracelet/catwalk"><img width="174" height="174" alt="Catwalk Badge" src="https://github.com/user-attachments/assets/95b49515-fe82-4409-b10d-5beb0873787d" /></a>
-
 ## Configuration
 
 > [!TIP]
@@ -204,7 +196,7 @@ like you would. LSPs can be added manually like so:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "lsp": {
     "go": {
       "command": "gopls",
@@ -232,7 +224,7 @@ using `$(echo $VAR)` syntax.
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "mcp": {
     "filesystem": {
       "type": "stdio",
@@ -286,7 +278,7 @@ permissions. Use this with care.
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "permissions": {
     "allowed_tools": [
       "view",
@@ -310,7 +302,7 @@ completely hidden from the agent.
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "disabled_tools": ["bash", "sourcegraph"]
   }
@@ -327,7 +319,7 @@ from the agent, including builtin skills and skills discovered from disk.
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "disabled_skills": ["franz-config"]
   }
@@ -362,7 +354,7 @@ relative paths:
 
 ```jsonc
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "skills_paths": [
       "~/.config/franz-agent/skills", // Windows: "%LOCALAPPDATA%\\franz-agent\\skills",
@@ -398,7 +390,7 @@ focused _and_ your terminal supports reporting the focus state.
 
 ```jsonc
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "disable_notifications": false, // default
   },
@@ -418,7 +410,7 @@ name and location with the `initialize_as` option:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "initialize_as": "AGENTS.md"
   }
@@ -438,7 +430,7 @@ it creates. You can customize this behavior with the `attribution` option:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "attribution": {
       "trailer_style": "co-authored-by",
@@ -476,7 +468,7 @@ API. Don't forget to set `DEEPSEEK_API_KEY` in your environment.
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "providers": {
     "deepseek": {
       "type": "openai-compat",
@@ -505,7 +497,7 @@ Custom Anthropic-compatible providers follow this format:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "providers": {
     "custom-anthropic": {
       "type": "anthropic",
@@ -554,7 +546,7 @@ To add specific models to the configuration, configure as such:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "providers": {
     "vertexai": {
       "models": [
@@ -647,7 +639,7 @@ config:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "debug": true,
     "debug_lsp": true
@@ -658,10 +650,9 @@ config:
 ## Provider Auto-Updates
 
 By default, Franz automatically checks for the latest and greatest list of
-providers and models from [Catwalk](https://github.com/charmbracelet/catwalk),
-the open source Franz provider database. This means that when new providers and
-models are available, or when model metadata changes, Franz automatically
-updates your local configuration.
+providers and models. This means that when new providers and models are
+available, or when model metadata changes, Franz automatically updates your local
+configuration.
 
 ### Disabling automatic provider updates
 
@@ -674,7 +665,7 @@ your `franz-agent.json` config:
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {
     "disable_provider_auto_update": true
   }
@@ -693,10 +684,10 @@ Manually updating providers is possible with the `franz-agent update-providers`
 command:
 
 ```bash
-# Update providers remotely from Catwalk.
+# Update providers remotely.
 franz-agent update-providers
 
-# Update providers from a custom Catwalk base URL.
+# Update providers from a custom provider registry base URL.
 franz-agent update-providers https://example.com/
 
 # Update providers from a local file.

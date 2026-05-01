@@ -15,7 +15,7 @@ Franz uses JSON configuration files with the following priority (highest to lowe
 
 ```json
 {
-  "$schema": "https://charm.land/franz-agent.json",
+  "$schema": "https://raw.githubusercontent.com/marang/franz-agent/main/schema.json",
   "options": {}
 }
 ```
