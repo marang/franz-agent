@@ -18,7 +18,7 @@ Reads and displays file contents with line numbers for examining code, logs, or 
 </features>
 
 <limitations>
-- Max file size: 5MB
+- Max file size: 200KB
 - Default limit: 2000 lines
 - Lines >2000 chars truncated
 - Binary files (except images) cannot be displayed
