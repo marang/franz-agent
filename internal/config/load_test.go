@@ -1320,8 +1320,8 @@ func TestConfig_setDefaultsDisableDefaultProvidersEnvVar(t *testing.T) {
 }
 
 func TestConfig_setDefaultsDisableProviderAutoUpdateEnvVar(t *testing.T) {
-	t.Run("sets option from new environment variable", func(t *testing.T) {
-		t.Setenv("IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE", "true")
+	t.Run("sets option from environment variable", func(t *testing.T) {
+		t.Setenv("FRANZ_DISABLE_PROVIDER_AUTO_UPDATE", "true")
 
 		cfg := &Config{}
 		cfg.setDefaults("/tmp", "")
@@ -1330,7 +1330,7 @@ func TestConfig_setDefaultsDisableProviderAutoUpdateEnvVar(t *testing.T) {
 	})
 
 	t.Run("does not use legacy environment variable", func(t *testing.T) {
-		t.Setenv("FRANZ_DISABLE_PROVIDER_AUTO_UPDATE", "true")
+		t.Setenv("IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE", "true")
 
 		cfg := &Config{}
 		cfg.setDefaults("/tmp", "")

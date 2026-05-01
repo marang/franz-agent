@@ -210,7 +210,7 @@ func loadProviders(key providerCacheKey) ([]catwalk.Provider, error) {
 		items, err := catwalkSyncer.Get(ctx)
 		if err != nil {
 			catwalkURL := fmt.Sprintf("%s/v2/providers", key.catwalkURL)
-			errs <- fmt.Errorf("Franz was unable to fetch an updated list of providers from %s. Consider setting IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE=1 to use the embedded providers bundled at the time of this Franz release. You can also update providers manually. For more info see franz-agent update-providers --help.\n\nCause: %w", catwalkURL, err) //nolint:staticcheck
+			errs <- fmt.Errorf("Franz was unable to fetch an updated list of providers from %s. Consider setting FRANZ_DISABLE_PROVIDER_AUTO_UPDATE=1 to use the embedded providers bundled at the time of this Franz release. You can also update providers manually. For more info see franz-agent update-providers --help.\n\nCause: %w", catwalkURL, err) //nolint:staticcheck
 			return
 		}
 		providers.Append(items...)

@@ -175,14 +175,6 @@ Open it from the command palette (`Ctrl+P`) using **Skills Manager**.
 - Search skills from `skills.sh`, multi-select, and install directly.
 - Open skill detail links from search results.
 
-### Keyboard flow
-
-- `tab` / `shift+tab`: move between focus areas.
-- `up` / `down`: move through focus areas and list items.
-- `left` / `right`: switch tab/action selection in the active row.
-- `space`: toggle selection in skill lists.
-- `enter`: run the selected action (or toggle details on focused item).
-
 ### Security and permissions
 
 - Skills installed from `skills.sh` are validated with a security audit before use.
@@ -672,10 +664,10 @@ your `franz-agent.json` config:
 }
 ```
 
-Or set the `IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE` environment variable:
+Or set the `FRANZ_DISABLE_PROVIDER_AUTO_UPDATE` environment variable:
 
 ```bash
-export IZO_AGENT_DISABLE_PROVIDER_AUTO_UPDATE=1
+export FRANZ_DISABLE_PROVIDER_AUTO_UPDATE=1
 ```
 
 ### Manually updating providers
