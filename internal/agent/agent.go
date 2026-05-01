@@ -409,12 +409,7 @@ func (a *sessionAgent) Run(ctx context.Context, call SessionAgentCall) (*fantasy
 			return a.messages.Update(ctx, *currentAssistant)
 		},
 		OnRetry: func(err *fantasy.ProviderError, delay time.Duration) {
-			slog.Debug("Retrying provider request",
-				"session_id", call.SessionID,
-				"title", err.Title,
-				"message", err.Message,
-				"delay", delay.String(),
-			)
+			slog.Warn("Provider request failed, retrying", providerRetryLogFields(call.SessionID, err, delay)...)
 		},
 		OnToolCall: func(tc fantasy.ToolCallContent) error {
 			toolCall := message.ToolCall{
@@ -1475,4 +1470,22 @@ func estimateMessageChars(msg fantasy.Message) int {
 		}
 	}
 	return size
+}
+
+func providerRetryLogFields(sessionID string, err *fantasy.ProviderError, delay time.Duration) []any {
+	fields := []any{
+		"session_id", sessionID,
+		"retry_delay", delay.String(),
+	}
+	if err == nil {
+		return fields
+	}
+	fields = append(fields, "status_code", err.StatusCode)
+	if err.Title != "" {
+		fields = append(fields, "title", err.Title)
+	}
+	if err.Message != "" {
+		fields = append(fields, "message", err.Message)
+	}
+	return fields
 }
