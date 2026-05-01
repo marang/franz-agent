@@ -1,0 +1,137 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Publish to AUR
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (for example v1.2.3). Leave empty to use current ref tag."
+        required: false
+        type: string
+
+concurrency:
+  group: aur-publish
+  cancel-in-progress: true
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+
+    env:
+      PKGNAME: franz-agent
+      AUR_REPO: franz-agent
+      VERSION: ${{ inputs.version || github.ref_name }}
+
+    steps:
+      - name: Install deps
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git go pacman-contrib openssh curl sudo
+
+      - name: Checkout source repo
+        uses: actions/checkout@v5
+
+      - name: Validate version input
+        run: |
+          if [ -z "$VERSION" ]; then
+            echo "VERSION is empty. Provide a tag (vX.Y.Z)."
+            exit 1
+          fi
+          case "$VERSION" in
+            v*) ;;
+            *)
+              echo "VERSION must start with 'v', got: $VERSION"
+              exit 1
+              ;;
+          esac
+
+      - name: Strip leading v from tag
+        id: v
+        run: echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate PKGBUILD for franz-agent
+        run: |
+          ver="${{ steps.v.outputs.version }}"
+          tarball="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/v${ver}.tar.gz"
+          sum=$(curl -L "$tarball" | sha256sum | cut -d' ' -f1)
+
+          cat > PKGBUILD <<EOF
+          pkgname=franz-agent
+          pkgver=${ver}
+          pkgrel=1
+          pkgdesc='A powerful terminal-based AI assistant for developers.'
+          arch=('x86_64' 'aarch64')
+          url='https://github.com/${GITHUB_REPOSITORY}'
+          license=('custom:FSL-1.1-MIT')
+          depends=()
+          makedepends=('go' 'git')
+          source=("\${pkgname}-\${pkgver}.tar.gz::${tarball}")
+          sha256sums=('${sum}')
+
+          build() {
+            cd "\${pkgname}-\${pkgver}"
+            export CGO_ENABLED=0
+            export GOEXPERIMENT=greenteagc
+            go build -trimpath -ldflags "-s -w -X github.com/marang/franz-agent/internal/version.Version=v\${pkgver}" .
+          }
+
+          package() {
+            cd "\${pkgname}-\${pkgver}"
+            install -Dm755 "./franz-agent" "\${pkgdir}/usr/bin/franz-agent"
+            install -Dm644 "./LICENSE.md" "\${pkgdir}/usr/share/licenses/franz-agent/LICENSE.md"
+            install -Dm644 "./README.md" "\${pkgdir}/usr/share/doc/franz-agent/README.md"
+          }
+          EOF
+
+      - name: Create non-root build user
+        run: |
+          useradd -m build
+          echo 'build ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          chown -R build:build .
+
+      - name: Generate .SRCINFO
+        run: |
+          sudo -u build makepkg --printsrcinfo > .SRCINFO
+
+      - name: Prepare SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.AUR_PRIVATE_KEY }}
+
+      - name: Trust AUR host key
+        run: |
+          install -m 700 -d ~/.ssh
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Clone AUR repo
+        env:
+          GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=accept-new"
+          SSH_AUTH_SOCK: ${{ env.SSH_AUTH_SOCK }}
+        run: |
+          git clone ssh://aur@aur.archlinux.org/${AUR_REPO}.git aur
+
+      - name: Commit and push to AUR
+        env:
+          GIT_AUTHOR_NAME:  ${{ secrets.AUR_COMMIT_NAME || github.actor }}
+          GIT_AUTHOR_EMAIL: ${{ secrets.AUR_COMMIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}
+          GIT_COMMITTER_NAME:  ${{ secrets.AUR_COMMIT_NAME || github.actor }}
+          GIT_COMMITTER_EMAIL: ${{ secrets.AUR_COMMIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}
+        run: |
+          ver="${{ steps.v.outputs.version }}"
+          cp PKGBUILD .SRCINFO aur/
+          cd aur
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "No changes to push."
+            exit 0
+          fi
+          git commit -m "Release ${PKGNAME} ${ver}"
+          git push origin HEAD:master

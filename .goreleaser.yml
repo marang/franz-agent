@@ -1,0 +1,91 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: franz-agent
+
+before:
+  hooks:
+    - go mod tidy
+    - rm -rf completions
+    - mkdir completions
+    - rm -rf manpages
+    - mkdir manpages
+    - sh -c 'go run . completion bash >./completions/franz-agent.bash'
+    - sh -c 'go run . completion zsh >./completions/franz-agent.zsh'
+    - sh -c 'go run . completion fish >./completions/franz-agent.fish'
+    - sh -c 'go run . man | gzip -c >./manpages/franz-agent.1.gz'
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+      - GOEXPERIMENT=greenteagc
+    goos:
+      - linux
+      - darwin
+      - windows
+      - freebsd
+      - openbsd
+      - netbsd
+      - android
+    goarch:
+      - amd64
+      - arm64
+      - "386"
+      - arm
+    goarm:
+      - "7"
+    ignore:
+      - goos: android
+        goarch: amd64
+      - goos: android
+        goarch: arm
+      - goos: android
+        goarch: "386"
+      - goos: windows
+        goarch: arm
+    ldflags:
+      - -s -w -X github.com/marang/franz-agent/internal/version.Version={{.Version}}
+    flags:
+      - -trimpath
+
+archives:
+  - name_template: >-
+      franz-agent_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- with .Arm}}v{{ . }}{{ end }}
+    wrap_in_directory: true
+    files:
+      - README*
+      - LICENSE*
+      - manpages/*
+      - completions/*
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: checksums.txt
+
+source:
+  enabled: true
+
+sboms:
+  - artifacts: archive
+  - id: source
+    artifacts: source
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^test:"
+      - "^test\\("
+      - "^chore\\(deps\\): "
+      - "^chore\\(legal\\): "
+
+release:
+  prerelease: auto
