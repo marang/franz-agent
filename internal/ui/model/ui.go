@@ -1869,8 +1869,8 @@ func (m *UI) handleKeyPressMsg(msg tea.KeyPressMsg) tea.Cmd {
 		case key.Matches(msg, m.keyMap.Sidebar):
 			if m.state == uiChat {
 				cmds = append(cmds, m.toggleCompactMode())
-				return true
 			}
+			return true
 		case key.Matches(msg, m.keyMap.Yolo):
 			if m.shouldCyclePermissionMode() {
 				cmds = append(cmds, util.ReportInfo(m.cyclePermissionMode()))

@@ -12,6 +12,7 @@ import (
 	"github.com/marang/franz-agent/internal/config"
 	"github.com/marang/franz-agent/internal/csync"
 	"github.com/marang/franz-agent/internal/permission"
+	"github.com/marang/franz-agent/internal/ui/attachments"
 	"github.com/marang/franz-agent/internal/ui/common"
 	"github.com/marang/franz-agent/internal/ui/dialog"
 	"github.com/marang/franz-agent/internal/ui/util"
@@ -155,6 +156,32 @@ func TestShouldAttemptClipboardImagePaste(t *testing.T) {
 		t.Parallel()
 		require.False(t, shouldAttemptClipboardImagePaste(tea.PasteMsg{Content: "hello"}))
 	})
+}
+
+func TestSidebarShortcutDoesNotReachTextareaOutsideChat(t *testing.T) {
+	t.Parallel()
+
+	keyMap := DefaultKeyMap()
+	ta := textarea.New()
+	ta.SetValue("abc")
+	ta.SetCursorColumn(3)
+	ui := &UI{
+		state:    uiLanding,
+		focus:    uiFocusEditor,
+		dialog:   dialog.NewOverlay(),
+		keyMap:   keyMap,
+		textarea: ta,
+		attachments: attachments.New(nil, attachments.Keymap{
+			DeleteMode: keyMap.Editor.AttachmentDeleteMode,
+			DeleteAll:  keyMap.Editor.DeleteAllAttachments,
+			Escape:     keyMap.Editor.Escape,
+		}),
+	}
+
+	_ = ui.handleKeyPressMsg(tea.KeyPressMsg(tea.Key{Code: 'b', Mod: tea.ModCtrl}))
+
+	require.Equal(t, 3, ui.textarea.Column())
+	require.Equal(t, "abc", ui.textarea.Value())
 }
 
 func TestCyclePermissionModeCyclesModes(t *testing.T) {
