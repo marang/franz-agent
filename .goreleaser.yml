@@ -23,10 +23,6 @@ builds:
       - linux
       - darwin
       - windows
-      - freebsd
-      - openbsd
-      - netbsd
-      - android
     goarch:
       - amd64
       - arm64
@@ -35,12 +31,6 @@ builds:
     goarm:
       - "7"
     ignore:
-      - goos: android
-        goarch: amd64
-      - goos: android
-        goarch: arm
-      - goos: android
-        goarch: "386"
       - goos: windows
         goarch: arm
     ldflags:
