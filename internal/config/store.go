@@ -224,6 +224,7 @@ func (s *ConfigStore) SetProviderAPIKey(scope Scope, providerID string, apiKey a
 				providerConfig.SetupGitHubCopilot()
 			case openai_codex.ProviderID:
 				providerConfig.SetupOpenAICodex(accountID)
+				providerConfig.Models = openAICodexModelsForProvider(providerConfig, providerConfig.Models)
 			}
 		}
 	}
@@ -309,6 +310,7 @@ func (s *ConfigStore) RefreshOAuthToken(ctx context.Context, scope Scope, provid
 			return fmt.Errorf("failed to extract chatgpt account id from refreshed token: %w", err)
 		}
 		providerConfig.SetupOpenAICodex(accountID)
+		providerConfig.Models = openAICodexModelsForProvider(providerConfig, providerConfig.Models)
 	}
 
 	s.config.Providers.Set(providerID, providerConfig)

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -255,7 +256,18 @@ func (c *Config) configureProviders(store *ConfigStore, env env.Env, resolver Va
 					accountID = parsed
 				}
 			}
+			if prepared.OAuthToken == nil && prepared.APIKey == "" {
+				if cliAuth, err := openai_codex.ReadCodexCLIAuth(); err == nil {
+					prepared.APIKey = cliAuth.Token.AccessToken
+					prepared.APIKeyTemplate = cliAuth.Token.AccessToken
+					prepared.OAuthToken = cliAuth.Token
+					accountID = cliAuth.AccountID
+				} else if !errors.Is(err, openai_codex.ErrCodexCLIAuthNotFound) {
+					slog.Debug("Could not read Codex CLI credentials", "error", err)
+				}
+			}
 			prepared.SetupOpenAICodex(accountID)
+			prepared.Models = openAICodexModelsForProvider(prepared, prepared.Models)
 			if prepared.ProviderOptions == nil {
 				prepared.ProviderOptions = make(map[string]any)
 			}

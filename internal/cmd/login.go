@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -202,6 +203,24 @@ func loginCopilot(cfg *config.ConfigStore) error {
 
 func loginOpenAICodex(cfg *config.ConfigStore) error {
 	ctx := getLoginContext()
+
+	if cliAuth, err := openai_codex.ReadCodexCLIAuth(); err == nil {
+		token := cliAuth.Token
+		if token.ExpiresAt > 0 && token.IsExpired() && token.RefreshToken != "" {
+			refreshed, refreshErr := openai_codex.RefreshToken(ctx, token.RefreshToken)
+			if refreshErr == nil {
+				token = refreshed
+			}
+		}
+		if err := cfg.SetProviderAPIKey(config.ScopeGlobal, openai_codex.ProviderID, token); err != nil {
+			return fmt.Errorf("failed to persist Codex CLI token: %w", err)
+		}
+		fmt.Println("Reused authenticated Codex CLI credentials from:")
+		fmt.Println(cliAuth.Path)
+		return nil
+	} else if !errors.Is(err, openai_codex.ErrCodexCLIAuthNotFound) {
+		fmt.Printf("Could not read Codex CLI credentials, falling back to browser login: %v\n", err)
+	}
 
 	flow, err := openai_codex.StartAuthFlow("franz-agent")
 	if err != nil {
