@@ -26,13 +26,6 @@ builds:
     goarch:
       - amd64
       - arm64
-      - "386"
-      - arm
-    goarm:
-      - "7"
-    ignore:
-      - goos: windows
-        goarch: arm
     ldflags:
       - -s -w -X github.com/marang/franz-agent/internal/version.Version={{.Version}}
     flags:
