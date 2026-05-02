@@ -62,6 +62,11 @@ checksum:
 source:
   enabled: true
 
+sboms:
+  - artifacts: archive
+  - id: source
+    artifacts: source
+
 changelog:
   sort: asc
   filters:
