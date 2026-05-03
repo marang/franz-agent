@@ -34,7 +34,7 @@ jobs:
             base-devel git go pacman-contrib openssh curl sudo
 
       - name: Checkout source repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Validate version input
         run: |
@@ -99,7 +99,7 @@ jobs:
           sudo -u build makepkg --printsrcinfo > .SRCINFO
 
       - name: Prepare SSH agent
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.AUR_PRIVATE_KEY }}
 
