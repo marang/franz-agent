@@ -68,7 +68,7 @@ require (
 	golang.org/x/text v0.36.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.49.1
+	modernc.org/sqlite v1.50.0
 	mvdan.cc/sh/moreinterp v0.0.0-20260403132118-4fe0cc293024
 	mvdan.cc/sh/v3 v3.13.1
 )
